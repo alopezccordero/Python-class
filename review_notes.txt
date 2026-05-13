@@ -1,0 +1,9 @@
+who invented pytohn: guido van rossum 1980 1990
+in the national research institute for mathematics and computer science
+in the netherlands
+
+high level - supports oop
+code is converted to bytecode and executed by a vm
+
+python uses:
+1. machine learning.
