@@ -4,6 +4,9 @@ os.environ["MUJOCO_GL"] = "osmesa"
 import imageio
 import gymnasium as gym
 import register_env
+from stable_baselines3 import PPO
+
+model = PPO.load("models/checkpoints/ppo_humanoid_direction_7000000_steps", device="cpu")
 
 env = gym.make("HumanoidDirection-v0", render_mode="rgb_array")
 obs, info = env.reset()
@@ -13,7 +16,7 @@ num_episodes = 5
 episode_count = 0
 
 while episode_count < num_episodes:
-    action = env.action_space.sample()
+    action, _ = model.predict(obs, deterministic=True)
     obs, reward, terminated, truncated, info = env.step(action)
 
     frame = env.render()
@@ -34,7 +37,7 @@ env.close()
 
 print(f"number of frames: {len(frames)}")
 print(f"frames shape: {frames[0].shape}")
-writer = imageio.get_writer("humanoid_direction.mp4", fps=30)
+writer = imageio.get_writer("humanoid_direction_7m.mp4", fps=30)
 
 for frame in frames:
     writer.append_data(frame)
