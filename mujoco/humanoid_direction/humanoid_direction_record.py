@@ -1,12 +1,12 @@
 import os
-os.environ["MUJOCO_GL"] = "osmesa"
+os.environ["MUJOCO_GL"] = "glfw"
 
 import imageio
 import gymnasium as gym
 import register_env
 from stable_baselines3 import PPO
 
-model = PPO.load("models/checkpoints/ppo_humanoid_direction_7000000_steps", device="cpu")
+model = PPO.load("models/ppo_humanoid_direction_20m.zip", device="cpu")
 
 env = gym.make("HumanoidDirection-v0", render_mode="rgb_array")
 obs, info = env.reset()
