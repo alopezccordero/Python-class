@@ -14,7 +14,7 @@ model = PPO(
     verbose=1
 )
 
-model.learn(total_timesteps=5_000_000)
+model.learn(total_timesteps=20_000_000)
 
-model.save("models/ppo_humanoid_direction_5m")
+model.save("models/ppo_humanoid_direction_20m")
 
