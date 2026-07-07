@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=amp_humanoid_dir
+#SBATCH --job-name=humanoid_amp_notfixed
 #SBATCH --partition=gpua30q
 #SBATCH --time=30:00:00
 #SBATCH --gres=gpu:1
@@ -19,5 +19,5 @@ python --version
 
 nvidia-smi
 
-python train_sb3_amp.py
+python train_sb3_real_amp.py
 

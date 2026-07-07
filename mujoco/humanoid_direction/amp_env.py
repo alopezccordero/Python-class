@@ -3,34 +3,22 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from amp_discriminator import AMPDiscriminator
-
 
 class AMPHumanoidEnv(gym.Wrapper):
-    def __init__(
-        self,
-        env_id="HumanoidDirection-v0",
-        render_mode=None,
-        discriminator_path="amp_discriminator.pt",
-        amp_weight=0.2,
-        device="cpu",
-    ):
+    def __init__(self, discriminator, env_id="HumanoidDirection-v0", render_mode=None, amp_weight=0.2, device="cpu"):
         env = gym.make(env_id, render_mode=render_mode)
         super().__init__(env)
 
-        self.prev_amp_obs = None
+        self.disc = discriminator
         self.amp_weight = amp_weight
         self.device = device
-
-        self.disc = AMPDiscriminator(input_dim=90).to(self.device)
-        self.disc.load_state_dict(torch.load(discriminator_path, map_location=self.device))
-        self.disc.eval()
+        self.prev_amp_obs = None
+        self.fake_amp_transitions = []
 
     def get_amp_obs(self):
         data = self.env.unwrapped.data
         qpos = data.qpos.copy()
         qvel = data.qvel.copy()
-
         return np.concatenate([qpos[2:], qvel]).astype(np.float32)
 
     def reset(self, **kwargs):
@@ -48,6 +36,8 @@ class AMPHumanoidEnv(gym.Wrapper):
             current_amp_obs,
         ]).astype(np.float32)
 
+        self.fake_amp_transitions.append(amp_transition)
+
         with torch.no_grad():
             x = torch.tensor(amp_transition, dtype=torch.float32, device=self.device).unsqueeze(0)
             amp_reward = self.disc.amp_reward(x).item()
@@ -62,3 +52,8 @@ class AMPHumanoidEnv(gym.Wrapper):
         self.prev_amp_obs = current_amp_obs
 
         return obs, total_reward, terminated, truncated, info
+
+    def pop_fake_transitions(self):
+        transitions = self.fake_amp_transitions
+        self.fake_amp_transitions = []
+        return transitions
