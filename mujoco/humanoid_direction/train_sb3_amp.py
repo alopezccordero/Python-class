@@ -1,11 +1,13 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from amp_env import AMPHumanoidEnv
+import torch
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 env = AMPHumanoidEnv(
     discriminator_path="amp_discriminator.pt",
     amp_weight=0.2,
-    device="cpu"
+    device=device
 )
 
 env = Monitor(env)

@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=humanoid_dir
+#SBATCH --job-name=amp_humanoid_dir
 #SBATCH --partition=gpua30q
-#SBATCH --time=24:00:00
+#SBATCH --time=30:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
@@ -17,5 +17,7 @@ echo "Running on $(hostname)"
 echo "current directory: #(pwd)"
 python --version
 
-python humanoid_direction_train.py
+nvidia-smi
+
+python train_sb3_amp.py
 
