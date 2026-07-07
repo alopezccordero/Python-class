@@ -35,7 +35,7 @@ def make_env(rank):
     def _init():
         env = AMPHumanoidEnv(
             discriminator=disc,
-            amp_weight=0.2,
+            amp_weight=0.02,
             device=device,
         )
         env = Monitor(env)
@@ -61,7 +61,7 @@ amp_callback = AMPDiscriminatorCallback(
 checkpoint_callback = CheckpointCallback(
     save_freq=max(CHECKPOINT_EVERY // N_ENVS, 1),
     save_path="./models/checkpoints",
-    name_prefix="ppo_real_amp",
+    name_prefix="ppo_real_amp_filtered",
     save_replay_buffer=False,
     save_vecnormalize=False,
 )
@@ -82,7 +82,7 @@ model = PPO(
     gae_lambda=0.95,
     ent_coef=0.01,
     verbose=1,
-    tensorboard_log="./tensorboard_real_amp/",
+    tensorboard_log="./tensorboard_real_amp_filtered/",
 )
 
 model.learn(
@@ -90,7 +90,7 @@ model.learn(
     callback=callbacks,
 )
 
-model.save("models/ppo_humanoid_direction_real_amp_final")
+model.save("models/ppo_humanoid_direction_real_amp_filtered")
 torch.save(disc.state_dict(), "models/amp_discriminator_real_amp_final.pt")
 
 env.close()

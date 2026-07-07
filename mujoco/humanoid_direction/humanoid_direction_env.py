@@ -88,10 +88,11 @@ class HumanoidDirectionEnv(HumanoidEnv, EzPickle): # my class inherits from huma
         #the larger the values the larger the torques applied.
         #penalize larger motor commands
         #energy efficient movements.
-        reward = 5.0 * direction_reward + healthy_reward - ctrl_cost
+        reward = 10.0 * direction_reward + healthy_reward - ctrl_cost
         #without 5. healthy reward would dominate. would make the robot just stand
         #5.0 is used to balance direction reward too.
-
+        if direction_reward < 0.3:
+            reward -= 1.0
         #terminate if robot is not standing
         terminated = not self.is_healthy
 
