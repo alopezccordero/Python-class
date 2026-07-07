@@ -88,7 +88,12 @@ class HumanoidDirectionEnv(HumanoidEnv, EzPickle): # my class inherits from huma
         #the larger the values the larger the torques applied.
         #penalize larger motor commands
         #energy efficient movements.
-        reward = 10.0 * direction_reward + healthy_reward - ctrl_cost
+        speed_toward_target = np.dot(xy_velocity, self.target_dir)
+        standing_penalty = 0
+        if speed_toward_target < 0.3:
+            standing_penalty = 2.0
+
+        reward = 10.0 * direction_reward + healthy_reward - ctrl_cost - standing_penalty
         #without 5. healthy reward would dominate. would make the robot just stand
         #5.0 is used to balance direction reward too.
         if direction_reward < 0.3:
