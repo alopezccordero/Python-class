@@ -37,7 +37,7 @@ env.close()
 
 print(f"number of frames: {len(frames)}")
 print(f"frames shape: {frames[0].shape}")
-writer = imageio.get_writer("humanoid_direction_7m.mp4", fps=30)
+writer = imageio.get_writer("humanoid_direction_20m.mp4", fps=30)
 
 for frame in frames:
     writer.append_data(frame)
