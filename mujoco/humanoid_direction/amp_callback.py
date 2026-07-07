@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -13,6 +14,8 @@ class AMPDiscriminatorCallback(BaseCallback):
         batch_size=256,
         updates_per_call=4,
         train_freq=2048,
+        save_freq=500_000,
+        save_path="./models/checkpoints",
         device="cpu",
         verbose=1,
     ):
@@ -24,27 +27,33 @@ class AMPDiscriminatorCallback(BaseCallback):
         self.batch_size = batch_size
         self.updates_per_call = updates_per_call
         self.train_freq = train_freq
+        self.save_freq = save_freq
+        self.save_path = save_path
         self.device = device
         self.loss_fn = nn.BCEWithLogitsLoss()
+        self.last_save_step = 0
+
+        os.makedirs(self.save_path, exist_ok=True)
 
     def _on_step(self):
-        if self.num_timesteps % self.train_freq != 0:
-            return True
+        if self.num_timesteps % self.train_freq == 0:
+            self.train_discriminator()
+
+        if self.num_timesteps - self.last_save_step >= self.save_freq:
+            self.save_discriminator()
+            self.last_save_step = self.num_timesteps
+
+        return True
+
+    def train_discriminator(self):
+        fake_lists = self.training_env.env_method("pop_fake_transitions")
 
         fake_transitions = []
-
-        envs = self.training_env.envs
-
-        for env in envs:
-            base_env = env
-            while hasattr(base_env, "env"):
-                if hasattr(base_env, "pop_fake_transitions"):
-                    fake_transitions.extend(base_env.pop_fake_transitions())
-                    break
-                base_env = base_env.env
+        for lst in fake_lists:
+            fake_transitions.extend(lst)
 
         if len(fake_transitions) < self.batch_size:
-            return True
+            return
 
         fake_transitions = np.array(fake_transitions, dtype=np.float32)
 
@@ -86,14 +95,19 @@ class AMPDiscriminatorCallback(BaseCallback):
                 self.disc(torch.tensor(fake_np, dtype=torch.float32, device=self.device))
             ).mean().item()
 
-        if self.verbose:
-            print(
-                f"AMP Disc | loss={loss.item():.4f} "
-                f"real_prob={real_prob:.3f} fake_prob={fake_prob:.3f}"
-            )
+        print(
+            f"AMP Disc | loss={loss.item():.4f} "
+            f"real_prob={real_prob:.3f} fake_prob={fake_prob:.3f}"
+        )
 
         self.logger.record("amp/disc_loss", loss.item())
         self.logger.record("amp/real_prob", real_prob)
         self.logger.record("amp/fake_prob", fake_prob)
 
-        return True
+    def save_discriminator(self):
+        path = os.path.join(
+            self.save_path,
+            f"amp_discriminator_{self.num_timesteps}.pt"
+        )
+        torch.save(self.disc.state_dict(), path)
+        print("Saved discriminator checkpoint:", path)

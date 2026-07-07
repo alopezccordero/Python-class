@@ -5,8 +5,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
-#SBATCH --output=humanoid_dir_%j.out
-#SBATCH --error=humanoid_dir_%j.err
+#SBATCH --output=amp_humanoid_dir_%j.out
+#SBATCH --error=amp_humanoid_dir_%j.err
 
 source ~/miniconda3/bin/activate
 conda activate mujoco-env
