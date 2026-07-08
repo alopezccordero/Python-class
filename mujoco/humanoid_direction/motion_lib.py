@@ -13,8 +13,10 @@ class MotionLib:
         motion_dir="retargeted_pkl",
         filter_bad_contacts=True,
         max_lowest_foot_min=0.12,
+        transition_dt=None,
     ):
         self.motion_dir = Path(motion_dir)
+        self.transition_dt = transition_dt
         self.motions = []
 
         files = sorted(self.motion_dir.rglob("*.pkl"))
@@ -49,8 +51,10 @@ class MotionLib:
 
             qpos = motion["qpos"]
             qvel = motion["qvel"]
+            fps = float(motion.get("fps", 30.0))
+            frame_gap = self.compute_frame_gap(fps)
 
-            if len(qpos) < 2:
+            if len(qpos) <= frame_gap:
                 print("Skipping too-short file:", file)
                 skipped += 1
                 continue
@@ -74,10 +78,11 @@ class MotionLib:
 
             self.motions.append({
                 "file": str(file),
-                "fps": motion["fps"],
+                "fps": fps,
                 "qpos": qpos,
                 "qvel": qvel,
                 "length": len(qpos),
+                "frame_gap": frame_gap,
             })
 
             loaded += 1
@@ -88,8 +93,21 @@ class MotionLib:
         if len(self.motions) == 0:
             raise RuntimeError("No valid motions loaded after contact filtering.")
 
+        gaps = sorted({m["frame_gap"] for m in self.motions})
         print(f"Loaded {loaded} motions")
         print(f"Skipped {skipped} motions")
+        print(f"AMP transition frame gaps: {gaps}")
+
+    def compute_frame_gap(self, fps):
+        """Match expert transition duration to the environment control dt.
+
+        The AMP paper compares policy and reference state transitions over a
+        comparable time interval. If transition_dt is unavailable, fall back to
+        adjacent frames.
+        """
+        if self.transition_dt is None:
+            return 1
+        return max(1, int(round(float(self.transition_dt) * float(fps))))
 
     def compute_lowest_foot_min(self, qpos_seq, model, data, left_id, right_id):
         lowest = float("inf")
@@ -114,7 +132,8 @@ class MotionLib:
             motion_id = self.sample_motion_id()
 
         motion = self.motions[motion_id]
-        frame = random.randint(0, motion["length"] - 2)
+        max_start = motion["length"] - motion["frame_gap"] - 1
+        frame = random.randint(0, max_start)
 
         return motion_id, frame
 
@@ -130,17 +149,26 @@ class MotionLib:
         if motion_id is None or frame is None:
             motion_id, frame = self.sample_frame(motion_id)
 
+        motion = self.motions[motion_id]
+        frame_gap = motion["frame_gap"]
+
         qpos0, qvel0 = self.get_state(motion_id, frame)
-        qpos1, qvel1 = self.get_state(motion_id, frame + 1)
+        qpos1, qvel1 = self.get_state(motion_id, frame + frame_gap)
 
         return {
             "motion_id": motion_id,
             "frame": frame,
+            "frame_gap": frame_gap,
             "qpos0": qpos0,
             "qvel0": qvel0,
             "qpos1": qpos1,
             "qvel1": qvel1,
         }
+
+    def sample_reference_state(self):
+        motion_id, frame = self.sample_frame()
+        qpos, qvel = self.get_state(motion_id, frame)
+        return qpos, qvel
 
     def get_amp_obs(self, qpos, qvel):
         return np.concatenate([

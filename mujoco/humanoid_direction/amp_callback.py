@@ -23,8 +23,8 @@ class AMPDiscriminatorCallback(BaseCallback):
         amp_std=None,
         fake_replay_size=50000,
         gradient_penalty_weight=10.0,
-        real_label=0.9,
-        fake_label=0.1,
+        real_label=1.0,
+        fake_label=-1.0,
         verbose=1,
     ):
         super().__init__(verbose)
@@ -38,7 +38,7 @@ class AMPDiscriminatorCallback(BaseCallback):
         self.save_freq = save_freq
         self.save_path = save_path
         self.device = device
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.loss_fn = nn.MSELoss()
         self.last_save_step = 0
         self.amp_mean = amp_mean
         self.amp_std = amp_std
@@ -59,6 +59,11 @@ class AMPDiscriminatorCallback(BaseCallback):
 
         return True
 
+    def normalize_amp(self, x_np):
+        if self.amp_mean is not None and self.amp_std is not None:
+            return (x_np - self.amp_mean) / self.amp_std
+        return x_np
+
     def train_discriminator(self):
         fake_lists = self.training_env.env_method("pop_fake_transitions")
 
@@ -74,6 +79,11 @@ class AMPDiscriminatorCallback(BaseCallback):
         if len(self.fake_replay) < self.batch_size:
             return
 
+        self.disc.train()
+
+        last_loss = None
+        last_real_np = None
+        last_fake_np = None
         for _ in range(self.updates_per_call):
             fake_idx = np.random.randint(0, len(self.fake_replay), size=self.batch_size)
             fake_np = np.array(
@@ -86,70 +96,74 @@ class AMPDiscriminatorCallback(BaseCallback):
                 dtype=np.float32,
             )
 
-            x_np = np.concatenate([real_np, fake_np], axis=0)
+            real_x_np = self.normalize_amp(real_np)
+            fake_x_np = self.normalize_amp(fake_np)
 
-            if self.amp_mean is not None and self.amp_std is not None:
-                x_np = (x_np - self.amp_mean) / self.amp_std
+            real_x = torch.tensor(real_x_np, dtype=torch.float32, device=self.device)
+            fake_x = torch.tensor(fake_x_np, dtype=torch.float32, device=self.device)
 
-            y_np = np.concatenate([
-                np.full((self.batch_size, 1), self.real_label, dtype=np.float32),
-                np.full((self.batch_size, 1), self.fake_label, dtype=np.float32),
-            ], axis=0)
+            real_scores = self.disc(real_x)
+            fake_scores = self.disc(fake_x)
 
-            idx = np.random.permutation(len(x_np))
-            x_np = x_np[idx]
-            y_np = y_np[idx]
+            real_targets = torch.full_like(real_scores, self.real_label)
+            fake_targets = torch.full_like(fake_scores, self.fake_label)
 
-            x = torch.tensor(x_np, dtype=torch.float32, device=self.device)
-            y = torch.tensor(y_np, dtype=torch.float32, device=self.device)
-
-            logits = self.disc(x)
-            bce_loss = self.loss_fn(logits, y)
-
-            real_x = torch.tensor(real_np, dtype=torch.float32, device=self.device)
-            if self.amp_mean is not None and self.amp_std is not None:
-                real_x = (
-                    real_x
-                    - torch.tensor(self.amp_mean, dtype=torch.float32, device=self.device)
-                ) / torch.tensor(self.amp_std, dtype=torch.float32, device=self.device)
-
+            # Paper-style least-squares discriminator objective:
+            # real -> +1, policy/fake -> -1.
+            real_loss = self.loss_fn(real_scores, real_targets)
+            fake_loss = self.loss_fn(fake_scores, fake_targets)
             gp_loss = self.gradient_penalty(real_x)
-            loss = bce_loss + self.gradient_penalty_weight * gp_loss
+            loss = real_loss + fake_loss + self.gradient_penalty_weight * gp_loss
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
+            last_loss = loss
+            last_real_np = real_np
+            last_fake_np = fake_np
+
+        if last_loss is None or last_real_np is None or last_fake_np is None:
+            return
+
+        self.disc.eval()
         with torch.no_grad():
-            real_eval_np = real_np
-            fake_eval_np = fake_np
-            if self.amp_mean is not None and self.amp_std is not None:
-                real_eval_np = (real_eval_np - self.amp_mean) / self.amp_std
-                fake_eval_np = (fake_eval_np - self.amp_mean) / self.amp_std
+            real_eval_np = self.normalize_amp(last_real_np)
+            fake_eval_np = self.normalize_amp(last_fake_np)
 
-            real_prob = torch.sigmoid(
-                self.disc(torch.tensor(real_eval_np, dtype=torch.float32, device=self.device))
+            real_scores = self.disc(
+                torch.tensor(real_eval_np, dtype=torch.float32, device=self.device)
+            )
+            fake_scores = self.disc(
+                torch.tensor(fake_eval_np, dtype=torch.float32, device=self.device)
+            )
+            real_score = real_scores.mean().item()
+            fake_score = fake_scores.mean().item()
+            real_reward = self.disc.amp_reward(
+                torch.tensor(real_eval_np, dtype=torch.float32, device=self.device)
             ).mean().item()
-
-            fake_prob = torch.sigmoid(
-                self.disc(torch.tensor(fake_eval_np, dtype=torch.float32, device=self.device))
+            fake_reward = self.disc.amp_reward(
+                torch.tensor(fake_eval_np, dtype=torch.float32, device=self.device)
             ).mean().item()
 
         print(
-            f"AMP Disc | loss={loss.item():.4f} "
-            f"real_prob={real_prob:.3f} fake_prob={fake_prob:.3f}"
+            f"AMP Disc | loss={last_loss.item():.4f} "
+            f"real_score={real_score:.3f} fake_score={fake_score:.3f} "
+            f"real_reward={real_reward:.3f} fake_reward={fake_reward:.3f}"
         )
 
-        self.logger.record("amp/disc_loss", loss.item())
-        self.logger.record("amp/real_prob", real_prob)
-        self.logger.record("amp/fake_prob", fake_prob)
+        self.logger.record("amp/disc_loss", last_loss.item())
+        self.logger.record("amp/real_score", real_score)
+        self.logger.record("amp/fake_score", fake_score)
+        self.logger.record("amp/real_reward", real_reward)
+        self.logger.record("amp/fake_reward", fake_reward)
 
     def gradient_penalty(self, real):
         real = real.clone().detach().requires_grad_(True)
-        logits = self.disc(real)
+        scores = self.disc(real)
 
         gradients = torch.autograd.grad(
-            outputs=logits.sum(),
+            outputs=scores.sum(),
             inputs=real,
             create_graph=True,
             retain_graph=True,

@@ -1,22 +1,29 @@
-import os
 from pathlib import Path
 
+import gymnasium as gym
 import torch
 
+import register_env
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 
-from amp_env import AMPHumanoidEnv
-from amp_discriminator import AMPDiscriminator
-from motion_lib import MotionLib
 from amp_callback import AMPDiscriminatorCallback
+from amp_discriminator import AMPDiscriminator
+from amp_env import AMPHumanoidEnv
+from motion_lib import MotionLib
 
 
 TOTAL_TIMESTEPS = 20_000_000
 N_ENVS = 8
 CHECKPOINT_EVERY = 500_000
+
+# Paper-closer AMP settings.
+AMP_WEIGHT = 0.5
+REFERENCE_STATE_INIT_PROB = 0.3
+DISCRIMINATOR_LR = 1e-4
+DISCRIMINATOR_HIDDEN_DIM = 512
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "models"
@@ -33,13 +40,25 @@ print("Using device:", device)
 if torch.cuda.is_available():
     print("GPU:", torch.cuda.get_device_name(0))
 
-motion_lib = MotionLib(str(BASE_DIR / "retargeted_pkl"))
+# Match expert AMP transition spacing to the environment control timestep.
+_tmp_env = gym.make("HumanoidDirection-v0")
+ENV_DT = float(_tmp_env.unwrapped.dt)
+_tmp_env.close()
+print("Environment dt:", ENV_DT)
+
+motion_lib = MotionLib(
+    str(BASE_DIR / "retargeted_pkl"),
+    transition_dt=ENV_DT,
+)
 amp_mean, amp_std = motion_lib.compute_amp_stats(num_samples=10000)
 
-disc = AMPDiscriminator(input_dim=90).to(device)
+disc = AMPDiscriminator(
+    input_dim=90,
+    hidden_dim=DISCRIMINATOR_HIDDEN_DIM,
+).to(device)
 disc_optimizer = torch.optim.Adam(
     disc.parameters(),
-    lr=1e-5,
+    lr=DISCRIMINATOR_LR,
     weight_decay=1e-4,
 )
 
@@ -48,10 +67,12 @@ def make_env(rank):
     def _init():
         env = AMPHumanoidEnv(
             discriminator=disc,
-            amp_weight=0.2,
+            motion_lib=motion_lib,
+            amp_weight=AMP_WEIGHT,
             device=device,
             amp_mean=amp_mean,
             amp_std=amp_std,
+            reference_state_init_prob=REFERENCE_STATE_INIT_PROB,
         )
         env = Monitor(env)
         return env
@@ -66,17 +87,17 @@ amp_callback = AMPDiscriminatorCallback(
     discriminator=disc,
     optimizer=disc_optimizer,
     batch_size=256,
-    updates_per_call=1,
+    updates_per_call=2,
     train_freq=8192,
     save_freq=CHECKPOINT_EVERY,
     save_path=str(CHECKPOINT_DIR),
     device=device,
     amp_mean=amp_mean,
     amp_std=amp_std,
-    fake_replay_size=50000,
+    fake_replay_size=100000,
     gradient_penalty_weight=10.0,
-    real_label=0.9,
-    fake_label=0.1,
+    real_label=1.0,
+    fake_label=-1.0,
 )
 
 checkpoint_callback = CheckpointCallback(
@@ -92,6 +113,14 @@ callbacks = CallbackList([
     checkpoint_callback,
 ])
 
+policy_kwargs = dict(
+    activation_fn=torch.nn.ReLU,
+    net_arch=dict(
+        pi=[1024, 512],
+        vf=[1024, 512],
+    ),
+)
+
 model = PPO(
     "MlpPolicy",
     env,
@@ -102,6 +131,7 @@ model = PPO(
     gamma=0.99,
     gae_lambda=0.95,
     ent_coef=0.01,
+    policy_kwargs=policy_kwargs,
     verbose=1,
     tensorboard_log=str(TENSORBOARD_DIR),
 )

@@ -1,10 +1,21 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class AMPDiscriminator(nn.Module):
-    def __init__(self, input_dim=90, hidden_dim=256):
+    """Paper-style AMP discriminator.
+
+    The AMP paper uses a least-squares discriminator that predicts +1 for
+    reference motion transitions and -1 for policy transitions. The style reward
+    is bounded in [0, 1]:
+
+        r = max(0, 1 - 0.25 * (D(s, s') - 1)^2)
+
+    This is different from BCE/GAIL rewards and usually gives a better-scaled
+    motion-prior reward for PPO.
+    """
+
+    def __init__(self, input_dim=90, hidden_dim=512):
         super().__init__()
         self.input_dim = input_dim
 
@@ -27,19 +38,19 @@ class AMPDiscriminator(nn.Module):
 
         return self.net(x).view(-1, 1)
 
+    def predict_score(self, x):
+        return self.forward(x)
+
     def predict_prob(self, x):
-        logits = self.forward(x)
-        return torch.sigmoid(logits)
+        """Compatibility helper for old logging code.
+
+        For paper-style AMP, the discriminator output is a score, not a true
+        probability. This maps the score to [0, 1] only for rough diagnostics.
+        """
+        return torch.sigmoid(self.forward(x))
 
     def amp_reward(self, x):
-        """
-        AMP style reward.
-
-        The discriminator is trained with real motion as label 1 and policy motion
-        as label 0, so higher logits mean more expert-like motion. This computes
-        -log(1 - D(x)) using softplus(logit), which is numerically more stable
-        than applying log to sigmoid probabilities directly.
-        """
-        logits = self.forward(x)
-        reward = F.softplus(logits)
-        return torch.clamp(reward, min=0.0, max=5.0)
+        """Bounded AMP style reward from the paper, in [0, 1]."""
+        score = self.forward(x)
+        reward = 1.0 - 0.25 * torch.square(score - 1.0)
+        return torch.clamp(reward, min=0.0, max=1.0)
