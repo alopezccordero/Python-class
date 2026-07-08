@@ -137,6 +137,8 @@ class AMPDiscriminatorCallback(BaseCallback):
             fake_scores = self.disc(
                 torch.tensor(fake_eval_np, dtype=torch.float32, device=self.device)
             )
+            real_scores = torch.clamp(real_scores, -10.0, 10.0)
+            fake_scores = torch.clamp(fake_scores, -10.0, 10.0)
             real_score = real_scores.mean().item()
             fake_score = fake_scores.mean().item()
             real_reward = self.disc.amp_reward(

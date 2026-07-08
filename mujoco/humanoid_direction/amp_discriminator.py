@@ -50,7 +50,7 @@ class AMPDiscriminator(nn.Module):
         return torch.sigmoid(self.forward(x))
 
     def amp_reward(self, x):
-        """Bounded AMP style reward from the paper, in [0, 1]."""
         score = self.forward(x)
+        score = torch.clamp(score, min=-10.0, max=10.0)
         reward = 1.0 - 0.25 * torch.square(score - 1.0)
         return torch.clamp(reward, min=0.0, max=1.0)
