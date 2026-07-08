@@ -20,8 +20,8 @@ N_ENVS = 8
 CHECKPOINT_EVERY = 500_000
 
 # Paper-closer AMP settings.
-AMP_WEIGHT = 0.5
-REFERENCE_STATE_INIT_PROB = 0.3
+AMP_WEIGHT = 0.1
+REFERENCE_STATE_INIT_PROB = 0.1
 DISCRIMINATOR_LR = 1e-4
 DISCRIMINATOR_HIDDEN_DIM = 512
 
@@ -125,7 +125,7 @@ model = PPO(
     "MlpPolicy",
     env,
     device=device,
-    learning_rate=3e-4,
+    learning_rate=1e-4,
     n_steps=2048,
     batch_size=512,
     gamma=0.99,
