@@ -13,7 +13,7 @@ from amp_callback import AMPDiscriminatorCallback
 
 
 TOTAL_TIMESTEPS = 5_000_000
-N_ENVS = 4
+N_ENVS = 8
 CHECKPOINT_EVERY = 500_000
 
 os.makedirs("models", exist_ok=True)
@@ -51,7 +51,7 @@ amp_callback = AMPDiscriminatorCallback(
     discriminator=disc,
     optimizer=disc_optimizer,
     batch_size=256,
-    updates_per_call=4,
+    updates_per_call=8,
     train_freq=2048,
     save_freq=CHECKPOINT_EVERY,
     save_path="./models/checkpoints",
@@ -76,7 +76,7 @@ model = PPO(
     env,
     device=device,
     learning_rate=3e-4,
-    n_steps=1024,
+    n_steps=2048,
     batch_size=512,
     gamma=0.99,
     gae_lambda=0.95,
