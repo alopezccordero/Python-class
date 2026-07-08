@@ -5,7 +5,16 @@ import torch
 
 
 class AMPHumanoidEnv(gym.Wrapper):
-    def __init__(self, discriminator, env_id="HumanoidDirection-v0", render_mode=None, amp_weight=0.2, device="cpu"):
+    def __init__(
+        self,
+        discriminator,
+        env_id="HumanoidDirection-v0",
+        render_mode=None,
+        amp_weight=0.2,
+        device="cpu",
+        amp_mean=None,
+        amp_std=None,
+    ):
         env = gym.make(env_id, render_mode=render_mode)
         super().__init__(env)
 
@@ -14,6 +23,8 @@ class AMPHumanoidEnv(gym.Wrapper):
         self.device = device
         self.prev_amp_obs = None
         self.fake_amp_transitions = []
+        self.amp_mean = amp_mean
+        self.amp_std = amp_std
 
     def get_amp_obs(self):
         data = self.env.unwrapped.data
@@ -38,8 +49,12 @@ class AMPHumanoidEnv(gym.Wrapper):
 
         self.fake_amp_transitions.append(amp_transition)
 
+        amp_transition_for_reward = amp_transition
+        if self.amp_mean is not None and self.amp_std is not None:
+            amp_transition_for_reward = (amp_transition_for_reward - self.amp_mean) / self.amp_std
+
         with torch.no_grad():
-            x = torch.tensor(amp_transition, dtype=torch.float32, device=self.device).unsqueeze(0)
+            x = torch.tensor(amp_transition_for_reward, dtype=torch.float32, device=self.device).unsqueeze(0)
             amp_reward = self.disc.amp_reward(x).item()
 
         total_reward = task_reward + self.amp_weight * amp_reward

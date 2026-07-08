@@ -94,7 +94,7 @@ class HumanoidDirectionEnv(HumanoidEnv, EzPickle): # my class inherits from huma
        # if speed_toward_target < 0.3:
        #     standing_penalty = 2.0
 
-        reward = 15.0 * direction_reward + healthy_reward - ctrl_cost #- standing_penalty
+        reward = 5.0 * direction_reward + 0.5 * healthy_reward - ctrl_cost
         #without 5. healthy reward would dominate. would make the robot just stand
         #5.0 is used to balance direction reward too.
 

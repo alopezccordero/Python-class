@@ -162,3 +162,14 @@ class MotionLib:
         )
 
         return np.concatenate([amp_obs0, amp_obs1]).astype(np.float32)
+
+    def compute_amp_stats(self, num_samples=10000):
+        samples = np.array(
+            [self.sample_amp_transition() for _ in range(num_samples)],
+            dtype=np.float32,
+        )
+
+        mean = samples.mean(axis=0).astype(np.float32)
+        std = samples.std(axis=0).astype(np.float32) + 1e-6
+
+        return mean, std

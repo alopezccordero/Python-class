@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class AMPDiscriminator(nn.Module):
     def __init__(self, input_dim=90, hidden_dim=256):
         super().__init__()
+        self.input_dim = input_dim
 
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -15,7 +17,15 @@ class AMPDiscriminator(nn.Module):
         )
 
     def forward(self, x):
-        return self.net(x)
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+
+        if x.shape[-1] != self.input_dim:
+            raise ValueError(
+                f"Expected AMP input dim {self.input_dim}, got {x.shape[-1]}"
+            )
+
+        return self.net(x).view(-1, 1)
 
     def predict_prob(self, x):
         logits = self.forward(x)
@@ -24,8 +34,12 @@ class AMPDiscriminator(nn.Module):
     def amp_reward(self, x):
         """
         AMP style reward.
-        Higher when discriminator thinks motion is real.
+
+        The discriminator is trained with real motion as label 1 and policy motion
+        as label 0, so higher logits mean more expert-like motion. This computes
+        -log(1 - D(x)) using softplus(logit), which is numerically more stable
+        than applying log to sigmoid probabilities directly.
         """
-        prob = self.predict_prob(x)
-        reward = -torch.log(torch.clamp(1.0 - prob, min=1e-6))
-        return reward
+        logits = self.forward(x)
+        reward = F.softplus(logits)
+        return torch.clamp(reward, min=0.0, max=5.0)
