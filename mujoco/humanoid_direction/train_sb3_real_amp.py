@@ -28,7 +28,7 @@ if torch.cuda.is_available():
 motion_lib = MotionLib("retargeted_pkl")
 
 disc = AMPDiscriminator(input_dim=90).to(device)
-disc_optimizer = torch.optim.Adam(disc.parameters(), lr=1e-4)
+disc_optimizer = torch.optim.Adam(disc.parameters(), lr=5e-5)
 
 
 def make_env(rank):
@@ -51,7 +51,7 @@ amp_callback = AMPDiscriminatorCallback(
     discriminator=disc,
     optimizer=disc_optimizer,
     batch_size=256,
-    updates_per_call=8,
+    updates_per_call=2,
     train_freq=2048,
     save_freq=CHECKPOINT_EVERY,
     save_path="./models/checkpoints",
