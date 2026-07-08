@@ -14,7 +14,7 @@ from motion_lib import MotionLib
 from amp_callback import AMPDiscriminatorCallback
 
 
-TOTAL_TIMESTEPS = 5_000_000
+TOTAL_TIMESTEPS = 20_000_000
 N_ENVS = 8
 CHECKPOINT_EVERY = 500_000
 
