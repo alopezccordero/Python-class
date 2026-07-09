@@ -52,5 +52,8 @@ class AMPDiscriminator(nn.Module):
     def amp_reward(self, x):
         score = self.forward(x)
         score = torch.clamp(score, min=-10.0, max=10.0)
-        reward = torch.exp(-0.25 * torch.square(score - 1.0))
+
+        # Softer dense reward so saturated scores still give some gradient/signal.
+        reward = torch.exp(-0.05 * torch.square(score - 1.0))
+
         return torch.clamp(reward, min=0.0, max=1.0)
