@@ -4,6 +4,7 @@ from collections import deque
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from stable_baselines3.common.callbacks import BaseCallback
 
 
@@ -23,6 +24,8 @@ class AMPDiscriminatorCallback(BaseCallback):
         amp_std=None,
         fake_replay_size=50000,
         gradient_penalty_weight=10.0,
+        score_reg_weight=1e-4,
+        max_grad_norm=1.0,
         real_label=1.0,
         fake_label=-1.0,
         verbose=1,
@@ -44,6 +47,8 @@ class AMPDiscriminatorCallback(BaseCallback):
         self.amp_std = amp_std
         self.fake_replay = deque(maxlen=fake_replay_size)
         self.gradient_penalty_weight = gradient_penalty_weight
+        self.score_reg_weight = score_reg_weight
+        self.max_grad_norm = max_grad_norm
         self.real_label = real_label
         self.fake_label = fake_label
 
@@ -104,22 +109,26 @@ class AMPDiscriminatorCallback(BaseCallback):
 
             real_scores = self.disc(real_x)
             fake_scores = self.disc(fake_x)
-    
-            real_scores = torch.clamp(real_scores, -10.0, 10.0)
-            fake_scores = torch.clamp(fake_scores, -10.0, 10.0)
 
             real_targets = torch.full_like(real_scores, self.real_label)
             fake_targets = torch.full_like(fake_scores, self.fake_label)
 
-            # Paper-style least-squares discriminator objective:
-            # real -> +1, policy/fake -> -1.
-            real_loss = self.loss_fn(real_scores, real_targets)
-            fake_loss = self.loss_fn(fake_scores, fake_targets)
+            # Use Huber/SmoothL1 on raw scores instead of hard-clamping before loss.
+            # Hard clamp can create zero-gradient saturation when fake_score explodes.
+            real_loss = F.smooth_l1_loss(real_scores, real_targets, beta=1.0)
+            fake_loss = F.smooth_l1_loss(fake_scores, fake_targets, beta=1.0)
+
             gp_loss = self.gradient_penalty(real_x)
-            loss = real_loss + fake_loss + self.gradient_penalty_weight * gp_loss
+
+            score_reg = self.score_reg_weight * (
+                real_scores.pow(2).mean() + fake_scores.pow(2).mean()
+            )
+
+            loss = real_loss + fake_loss + self.gradient_penalty_weight * gp_loss + score_reg
 
             self.optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.disc.parameters(), self.max_grad_norm)
             self.optimizer.step()
 
             last_loss = loss
@@ -143,6 +152,9 @@ class AMPDiscriminatorCallback(BaseCallback):
 
             real_score = real_scores.mean().item()
             fake_score = fake_scores.mean().item()
+            real_score_clamped = torch.clamp(real_scores, -10.0, 10.0).mean().item()
+            fake_score_clamped = torch.clamp(fake_scores, -10.0, 10.0).mean().item()
+
             real_reward = self.disc.amp_reward(
                 torch.tensor(real_eval_np, dtype=torch.float32, device=self.device)
             ).mean().item()
@@ -153,12 +165,15 @@ class AMPDiscriminatorCallback(BaseCallback):
         print(
             f"AMP Disc | loss={last_loss.item():.4f} "
             f"real_score={real_score:.3f} fake_score={fake_score:.3f} "
+            f"real_score_clamped={real_score_clamped:.3f} "
+            f"fake_score_clamped={fake_score_clamped:.3f} "
             f"real_reward={real_reward:.3f} fake_reward={fake_reward:.3f}"
         )
 
-        self.logger.record("amp/disc_loss", last_loss.item())
         self.logger.record("amp/real_score", real_score)
         self.logger.record("amp/fake_score", fake_score)
+        self.logger.record("amp/real_score_clamped", real_score_clamped)
+        self.logger.record("amp/fake_score_clamped", fake_score_clamped)
         self.logger.record("amp/real_reward", real_reward)
         self.logger.record("amp/fake_reward", fake_reward)
 

@@ -20,9 +20,9 @@ N_ENVS = 8
 CHECKPOINT_EVERY = 500_000
 
 # Paper-closer AMP settings.
-AMP_WEIGHT = 0.1
-REFERENCE_STATE_INIT_PROB = 0.1
-DISCRIMINATOR_LR = 1e-4
+AMP_WEIGHT = 0.2
+REFERENCE_STATE_INIT_PROB = 0.3
+DISCRIMINATOR_LR = 3e-5
 DISCRIMINATOR_HIDDEN_DIM = 512
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -87,15 +87,17 @@ amp_callback = AMPDiscriminatorCallback(
     discriminator=disc,
     optimizer=disc_optimizer,
     batch_size=256,
-    updates_per_call=2,
-    train_freq=8192,
+    updates_per_call=1,
+    train_freq=16384,
     save_freq=CHECKPOINT_EVERY,
     save_path=str(CHECKPOINT_DIR),
     device=device,
     amp_mean=amp_mean,
     amp_std=amp_std,
     fake_replay_size=100000,
-    gradient_penalty_weight=10.0,
+    gradient_penalty_weight=1.0,
+    score_reg_weight=1e-4,
+    max_grad_norm=1.0,
     real_label=1.0,
     fake_label=-1.0,
 )
