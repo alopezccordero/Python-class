@@ -158,16 +158,24 @@ class AMPDiscriminatorCallback(BaseCallback):
             real_reward = self.disc.amp_reward(
                 torch.tensor(real_eval_np, dtype=torch.float32, device=self.device)
             ).mean().item()
-            fake_reward = self.disc.amp_reward(
+            fake_rewards = self.disc.amp_reward(
                 torch.tensor(fake_eval_np, dtype=torch.float32, device=self.device)
-            ).mean().item()
+            )
+
+            fake_reward = fake_rewards.mean().item()
+            fake_reward_min = fake_rewards.min().item()
+            fake_reward_max = fake_rewards.max().item()
+            fake_reward_nonzero_frac = (fake_rewards > 1e-6).float().mean().item()
 
         print(
             f"AMP Disc | loss={last_loss.item():.4f} "
             f"real_score={real_score:.3f} fake_score={fake_score:.3f} "
             f"real_score_clamped={real_score_clamped:.3f} "
             f"fake_score_clamped={fake_score_clamped:.3f} "
-            f"real_reward={real_reward:.3f} fake_reward={fake_reward:.3f}"
+            f"real_reward={real_reward:.3f} fake_reward={fake_reward:.3f} "
+            f"fake_reward_min={fake_reward_min:.3g} "
+            f"fake_reward_max={fake_reward_max:.3g} "
+            f"fake_reward_nonzero_frac={fake_reward_nonzero_frac:.3f}"
         )
 
         self.logger.record("amp/real_score", real_score)
@@ -176,6 +184,9 @@ class AMPDiscriminatorCallback(BaseCallback):
         self.logger.record("amp/fake_score_clamped", fake_score_clamped)
         self.logger.record("amp/real_reward", real_reward)
         self.logger.record("amp/fake_reward", fake_reward)
+        self.logger.record("amp/fake_reward_min", fake_reward_min)
+        self.logger.record("amp/fake_reward_max", fake_reward_max)
+        self.logger.record("amp/fake_reward_nonzero_frac", fake_reward_nonzero_frac)
 
     def gradient_penalty(self, real):
         real = real.clone().detach().requires_grad_(True)
