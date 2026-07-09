@@ -105,7 +105,7 @@ amp_callback = AMPDiscriminatorCallback(
 checkpoint_callback = CheckpointCallback(
     save_freq=max(CHECKPOINT_EVERY // N_ENVS, 1),
     save_path=str(CHECKPOINT_DIR),
-    name_prefix="ppo_real_amp_filtered",
+    name_prefix="ppo_real_amp_filtered_softer",
     save_replay_buffer=False,
     save_vecnormalize=False,
 )
@@ -146,8 +146,8 @@ model.learn(
     callback=callbacks,
 )
 
-model.save(str(MODEL_DIR / "ppo_humanoid_direction_real_amp_filtered"))
-torch.save(disc.state_dict(), MODEL_DIR / "amp_discriminator_real_amp_final.pt")
+model.save(str(MODEL_DIR / "ppo_humanoid_direction_real_amp_filtered_softer"))
+torch.save(disc.state_dict(), MODEL_DIR / "amp_discriminator_real_amp_softer.pt")
 
 env.close()
 
