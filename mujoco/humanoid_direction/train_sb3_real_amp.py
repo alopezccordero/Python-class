@@ -131,10 +131,11 @@ def main():
         "MlpPolicy",
         env,
         device=device,
-        learning_rate=3e-4,      # 5e-5 was very slow for 20M steps
+        learning_rate=1e-4,      # 5e-5 was very slow for 20M steps
         n_steps=N_STEPS,
         batch_size=512,
-        n_epochs=10,
+        n_epochs=5,
+        target_kl=0.02,
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
