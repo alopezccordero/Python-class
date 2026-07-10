@@ -6,8 +6,41 @@ import gymnasium as gym
 import mujoco
 import numpy as np
 
+from amp_obs import build_amp_obs
+
+
+def slerp(q0, q1, alpha):
+    """Spherical interpolation of [w,x,y,z] quaternions."""
+    q0 = q0 / np.linalg.norm(q0)
+    q1 = q1 / np.linalg.norm(q1)
+    dot = float(np.dot(q0, q1))
+    if dot < 0.0:
+        q1 = -q1
+        dot = -dot
+    if dot > 0.9995:
+        q = q0 + alpha * (q1 - q0)
+        return q / np.linalg.norm(q)
+    theta0 = np.arccos(np.clip(dot, -1.0, 1.0))
+    theta = theta0 * alpha
+    sin0 = np.sin(theta0)
+    return (np.sin(theta0 - theta) / sin0) * q0 + (np.sin(theta) / sin0) * q1
+
 
 class MotionLib:
+    """Loads retargeted mocap and serves AMP transitions.
+
+    FIXES vs original:
+    1. AMP features come from the shared `build_amp_obs` (heading-invariant),
+       identical to what the policy side produces in amp_env.py.
+    2. Expert transitions are sampled at the *exact* environment control dt by
+       interpolating between mocap frames (lerp + quaternion slerp).
+       Previously: frame_gap = max(1, round(dt*fps)) = max(1, round(0.015*30))
+       = 1 frame = 33 ms, while policy transitions span 15 ms. Expert pairs
+       showed ~2.2x larger per-transition displacement, so the discriminator
+       could separate real/fake by displacement magnitude alone, regardless
+       of gait quality.
+    """
+
     def __init__(
         self,
         motion_dir="retargeted_pkl",
@@ -20,7 +53,6 @@ class MotionLib:
         self.motions = []
 
         files = sorted(self.motion_dir.rglob("*.pkl"))
-
         if len(files) == 0:
             raise FileNotFoundError(f"No .pkl files found in {motion_dir}")
 
@@ -31,11 +63,7 @@ class MotionLib:
             left_id = model.body("left_foot").id
             right_id = model.body("right_foot").id
         else:
-            env = None
-            model = None
-            data = None
-            left_id = None
-            right_id = None
+            env = model = data = left_id = right_id = None
 
         loaded = 0
         skipped = 0
@@ -49,25 +77,21 @@ class MotionLib:
                 skipped += 1
                 continue
 
-            qpos = motion["qpos"]
-            qvel = motion["qvel"]
+            qpos = np.asarray(motion["qpos"], dtype=np.float64)
+            qvel = np.asarray(motion["qvel"], dtype=np.float64)
             fps = float(motion.get("fps", 30.0))
-            frame_gap = self.compute_frame_gap(fps)
+            duration = (len(qpos) - 1) / fps
 
-            if len(qpos) <= frame_gap:
+            min_duration = self.transition_dt if self.transition_dt else (1.0 / fps)
+            if duration <= min_duration:
                 print("Skipping too-short file:", file)
                 skipped += 1
                 continue
 
             if filter_bad_contacts:
                 lowest_foot_min = self.compute_lowest_foot_min(
-                    qpos,
-                    model,
-                    data,
-                    left_id,
-                    right_id,
+                    qpos, model, data, left_id, right_id
                 )
-
                 if lowest_foot_min >= max_lowest_foot_min:
                     print(
                         f"Skipping bad-contact motion: {file} "
@@ -82,9 +106,8 @@ class MotionLib:
                 "qpos": qpos,
                 "qvel": qvel,
                 "length": len(qpos),
-                "frame_gap": frame_gap,
+                "duration": duration,
             })
-
             loaded += 1
 
         if env is not None:
@@ -93,111 +116,62 @@ class MotionLib:
         if len(self.motions) == 0:
             raise RuntimeError("No valid motions loaded after contact filtering.")
 
-        gaps = sorted({m["frame_gap"] for m in self.motions})
-        print(f"Loaded {loaded} motions")
-        print(f"Skipped {skipped} motions")
-        print(f"AMP transition frame gaps: {gaps}")
-
-    def compute_frame_gap(self, fps):
-        """Match expert transition duration to the environment control dt.
-
-        The AMP paper compares policy and reference state transitions over a
-        comparable time interval. If transition_dt is unavailable, fall back to
-        adjacent frames.
-        """
-        if self.transition_dt is None:
-            return 1
-        return max(1, int(round(float(self.transition_dt) * float(fps))))
+        print(f"Loaded {loaded} motions, skipped {skipped}")
+        if self.transition_dt is not None:
+            print(f"Expert transitions interpolated at dt = {self.transition_dt:.4f} s")
 
     def compute_lowest_foot_min(self, qpos_seq, model, data, left_id, right_id):
         lowest = float("inf")
-
         for qpos in qpos_seq:
             data.qpos[:] = qpos
             data.qvel[:] = 0.0
             mujoco.mj_forward(model, data)
-
-            left_z = data.xpos[left_id][2]
-            right_z = data.xpos[right_id][2]
-
-            lowest = min(lowest, left_z, right_z)
-
+            lowest = min(lowest, data.xpos[left_id][2], data.xpos[right_id][2])
         return lowest
 
-    def sample_motion_id(self):
-        return random.randint(0, len(self.motions) - 1)
+    # ------------------------------------------------------------------ #
 
-    def sample_frame(self, motion_id=None):
-        if motion_id is None:
-            motion_id = self.sample_motion_id()
+    def _interp_state(self, motion, t):
+        """State at continuous time t (seconds) via lerp + quat slerp."""
+        f = t * motion["fps"]
+        i0 = min(int(np.floor(f)), motion["length"] - 2)
+        alpha = float(f - i0)
 
-        motion = self.motions[motion_id]
-        max_start = motion["length"] - motion["frame_gap"] - 1
-        frame = random.randint(0, max_start)
+        qpos0, qpos1 = motion["qpos"][i0], motion["qpos"][i0 + 1]
+        qvel0, qvel1 = motion["qvel"][i0], motion["qvel"][i0 + 1]
 
-        return motion_id, frame
-
-    def get_state(self, motion_id, frame):
-        motion = self.motions[motion_id]
-
-        qpos = motion["qpos"][frame].copy()
-        qvel = motion["qvel"][frame].copy()
-
+        qpos = (1.0 - alpha) * qpos0 + alpha * qpos1
+        qpos[3:7] = slerp(qpos0[3:7], qpos1[3:7], alpha)
+        qvel = (1.0 - alpha) * qvel0 + alpha * qvel1
         return qpos, qvel
-
-    def get_transition(self, motion_id=None, frame=None):
-        if motion_id is None or frame is None:
-            motion_id, frame = self.sample_frame(motion_id)
-
-        motion = self.motions[motion_id]
-        frame_gap = motion["frame_gap"]
-
-        qpos0, qvel0 = self.get_state(motion_id, frame)
-        qpos1, qvel1 = self.get_state(motion_id, frame + frame_gap)
-
-        return {
-            "motion_id": motion_id,
-            "frame": frame,
-            "frame_gap": frame_gap,
-            "qpos0": qpos0,
-            "qvel0": qvel0,
-            "qpos1": qpos1,
-            "qvel1": qvel1,
-        }
-
-    def sample_reference_state(self):
-        motion_id, frame = self.sample_frame()
-        qpos, qvel = self.get_state(motion_id, frame)
-        return qpos, qvel
-
-    def get_amp_obs(self, qpos, qvel):
-        return np.concatenate([
-            qpos[2:],
-            qvel,
-        ]).astype(np.float32)
 
     def sample_amp_transition(self):
-        transition = self.get_transition()
+        motion = random.choice(self.motions)
 
-        amp_obs0 = self.get_amp_obs(
-            transition["qpos0"],
-            transition["qvel0"],
-        )
+        if self.transition_dt is None:
+            i = random.randint(0, motion["length"] - 2)
+            s0 = (motion["qpos"][i], motion["qvel"][i])
+            s1 = (motion["qpos"][i + 1], motion["qvel"][i + 1])
+        else:
+            t0 = random.uniform(0.0, motion["duration"] - self.transition_dt)
+            s0 = self._interp_state(motion, t0)
+            s1 = self._interp_state(motion, t0 + self.transition_dt)
 
-        amp_obs1 = self.get_amp_obs(
-            transition["qpos1"],
-            transition["qvel1"],
-        )
+        return np.concatenate([
+            build_amp_obs(*s0),
+            build_amp_obs(*s1),
+        ]).astype(np.float32)
 
-        return np.concatenate([amp_obs0, amp_obs1]).astype(np.float32)
+    def sample_reference_state(self):
+        motion = random.choice(self.motions)
+        i = random.randint(0, motion["length"] - 1)
+        return motion["qpos"][i].copy(), motion["qvel"][i].copy()
 
     def compute_amp_stats(self, num_samples=10000):
         samples = np.array(
             [self.sample_amp_transition() for _ in range(num_samples)],
             dtype=np.float32,
         )
-
         mean = samples.mean(axis=0).astype(np.float32)
         std = samples.std(axis=0).astype(np.float32) + 1e-6
-
         return mean, std

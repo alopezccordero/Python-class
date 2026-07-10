@@ -3,16 +3,17 @@ import torch.nn as nn
 
 
 class AMPDiscriminator(nn.Module):
-    """Paper-style AMP discriminator.
+    """Least-squares AMP discriminator (predicts +1 real / -1 fake).
 
-    The AMP paper uses a least-squares discriminator that predicts +1 for
-    reference motion transitions and -1 for policy transitions. The style reward
-    is bounded in [0, 1]:
+    FIX vs original: `amp_reward` previously used exp(-0.05*(d-1)^2), which is
+    almost flat: a confidently-fake score of -1 still earned reward 0.82 vs 1.0
+    for perfectly-real. The style signal was ~constant, so PPO had nothing to
+    optimize. This restores the paper reward
 
-        r = max(0, 1 - 0.25 * (D(s, s') - 1)^2)
+        r = clamp(1 - 0.25 * (d - 1)^2, 0, 1)
 
-    This is different from BCE/GAIL rewards and usually gives a better-scaled
-    motion-prior reward for PPO.
+    which gives r=1 at d=+1 (real) and r=0 at d<=-1 (fake) - a full-range,
+    informative reward.
     """
 
     def __init__(self, input_dim=90, hidden_dim=512):
@@ -41,19 +42,7 @@ class AMPDiscriminator(nn.Module):
     def predict_score(self, x):
         return self.forward(x)
 
-    def predict_prob(self, x):
-        """Compatibility helper for old logging code.
-
-        For paper-style AMP, the discriminator output is a score, not a true
-        probability. This maps the score to [0, 1] only for rough diagnostics.
-        """
-        return torch.sigmoid(self.forward(x))
-
     def amp_reward(self, x):
-        score = self.forward(x)
-        score = torch.clamp(score, min=-10.0, max=10.0)
-
-        # Softer dense reward so saturated scores still give some gradient/signal.
-        reward = torch.exp(-0.05 * torch.square(score - 1.0))
-
-        return torch.clamp(reward, min=0.0, max=1.0)
+        d = self.forward(x)
+        r = 1.0 - 0.25 * torch.square(d - 1.0)
+        return torch.clamp(r, min=0.0, max=1.0)
