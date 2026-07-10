@@ -15,7 +15,7 @@ from amp_env import AMPHumanoidEnv
 from motion_lib import MotionLib
 
 # --------------------------------------------------------------------- #
-TOTAL_TIMESTEPS = 20_000_000
+TOTAL_TIMESTEPS = 50_000_000
 N_ENVS = 8                      # = --cpus-per-task in your slurm file
 N_STEPS = 2048
 TRAIN_FREQ = N_ENVS * N_STEPS   # train the discriminator once per rollout
@@ -24,11 +24,11 @@ TASK_WEIGHT = 0.5               # both rewards are in [0, 1] now, so
 AMP_WEIGHT = 0.5                # 0.5 / 0.5 mixing as in the AMP paper
 REFERENCE_STATE_INIT_PROB = 0.5
 
-DISCRIMINATOR_LR = 1e-4
+DISCRIMINATOR_LR = 3e-5
 DISCRIMINATOR_HIDDEN_DIM = 512
-DISC_UPDATES_PER_ROLLOUT = 8
+DISC_UPDATES_PER_ROLLOUT = 2
 DISC_BATCH_SIZE = 512
-GRADIENT_PENALTY_WEIGHT = 5.0
+GRADIENT_PENALTY_WEIGHT = 10.0
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "models"
